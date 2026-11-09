@@ -13,18 +13,20 @@ func TestRequestBuffer(t *testing.T) {
 			test.AssertEqual(t, response[0], val[0], "Request does not equal response")
 		}
 	}
-	buffer.Request(1, makeRequest([]byte{1}))
-	buffer.Request(2, makeRequest([]byte{2}))
-	buffer.Request(3, makeRequest([]byte{3}))
-	go func() {
-		buffer.Respond([]byte{1})
-		buffer.Respond([]byte{2})
-		buffer.Respond([]byte{3})
-		buffer.Respond([]byte{4})
-		buffer.Respond([]byte{5})
-		buffer.Respond([]byte{6})
-	}()
-	buffer.Request(3, makeRequest([]byte{4}))
-	buffer.Request(3, makeRequest([]byte{5}))
-	buffer.Request(3, makeRequest([]byte{6}))
+	// Exercise waiting requests without assuming an order for the internal map.
+	for value := byte(1); value <= 3; value++ {
+		if buffer.Request(uint32(value), makeRequest([]byte{value})) {
+			t.Fatal("request unexpectedly completed before response")
+		}
+		buffer.Respond([]byte{value})
+	}
+	// Responses queued before requests must be delivered in arrival order.
+	for value := byte(4); value <= 6; value++ {
+		buffer.Respond([]byte{value})
+	}
+	for value := byte(4); value <= 6; value++ {
+		if !buffer.Request(uint32(value), makeRequest([]byte{value})) {
+			t.Fatal("queued response was not delivered")
+		}
+	}
 }
