@@ -1,0 +1,57 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Test
+        run: go test ./...
+      - name: Build and package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CGO_ENABLED = '0'
+          $env:GOARCH = 'amd64'
+          $package = 'virtual-fido-windows-amd64'
+          New-Item -ItemType Directory -Force "dist/$package/usbip" | Out-Null
+          go build -trimpath -ldflags='-s -w' -o "dist/$package/virtual-fido.exe" ./cmd/demo
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+          & "./dist/$package/virtual-fido.exe" --help
+          if ($LASTEXITCODE -ne 0) { throw 'Help smoke test failed' }
+          Copy-Item cmd/demo/usbip/bin/usbip.exe "dist/$package/usbip/"
+          Copy-Item cmd/demo/usbip/bin/usb.ids "dist/$package/usbip/"
+          Copy-Item cmd/demo/usbip/bin/usbip_vhci* "dist/$package/usbip/"
+          Copy-Item cmd/demo/usbip/bin/usbip_root.inf "dist/$package/usbip/"
+          Copy-Item LICENSE "dist/$package/"
+          Copy-Item cmd/demo/usbip/usbip-win/LICENSE "dist/$package/usbip/LICENSE"
+          Copy-Item cmd/demo/usbip/usbip-win/README.md "dist/$package/usbip/README.md"
+          Copy-Item docs/WINDOWS.md "dist/$package/README.md"
+          Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip"
+          $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $package.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: virtual-fido-windows-amd64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+      - name: Publish beta release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME dist/*.zip dist/SHA256SUMS.txt --verify-tag --prerelease --title "Virtual FIDO $env:GITHUB_REF_NAME (Windows x64)" --notes-file docs/RELEASE-NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
